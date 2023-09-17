@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=VIS Web Client Protocol Handler
+Exec=/usr/bin/viscs %u
+StartupNotify=false
+MimeType=x-scheme-handler/viscs;
+NoDisplay=true
+
+# execute `update-desktop-database` after copying into /usr/share/applications
