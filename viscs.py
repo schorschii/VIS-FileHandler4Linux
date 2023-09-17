@@ -23,8 +23,8 @@ from PyQt5.QtCore import *
 from locale import getdefaultlocale
 
 APP             = QApplication(sys.argv)
-APP_NAME        = "VIS File Handler"
-PROTOCOL_SCHEME = "viscs:"
+APP_NAME        = 'VIS File Handler'
+PROTOCOL_SCHEME = 'viscs:'
 DOWNLOAD_DIR    = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
 
 
@@ -54,7 +54,7 @@ def main():
         if(arg.startswith(PROTOCOL_SCHEME)):
             urlToHandle = arg
     if(urlToHandle == None):
-        print("Error: no valid '"+PROTOCOL_SCHEME+"' scheme parameter given.")
+        print('Error: no valid »%s« scheme parameter given.' % PROTOCOL_SCHEME)
         exit(1)
 
     try:
@@ -80,7 +80,6 @@ def main():
         # handle up-/downloads
         elif('transferQueueServlet' in parameters):
             transferQueueServlet = parameters['transferQueueServlet'][0]+'&transferQueueKey='+quote_plus(parameters['transferQueueKey'][0])
-            eventServlet = parameters['eventServlet'][0]
 
             # upload selected shit if requested
             if('uploadPath' in parameters):
@@ -147,8 +146,9 @@ def main():
                 #notificationFinished.add_action('clicked', 'Öffnen', openFile)
                 notificationFinished.show()
 
-            # end event - close "Please Wait..." window
-            endEventServlet = eventServlet+'&EventID=endcmd&EventMsg=0&formID='+quote_plus(parameters['de.pdv.visj.WEBSTART_FORMID'][0])
+        # end event - this closes the "Please Wait..." window
+        if('eventServlet' in parameters):
+            endEventServlet = parameters['eventServlet'][0]+'&EventID=endcmd&EventMsg=0&formID='+quote_plus(parameters['de.pdv.visj.WEBSTART_FORMID'][0])
             response = urllib.request.urlopen(endEventServlet)
             print('End Event URL:', endEventServlet, response.getcode())
             print()
