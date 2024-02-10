@@ -5,9 +5,14 @@ The web based VIS application does not use standard web technologies for up- and
 
 ## Installation
 ```
-pip3 install -r requirements.txt
-sudo cp viscs.py /usr/bin/viscs
+apt install python3-pip python3-pyqt5 python3-venv
+python3 -m venv --system-site-packages venv  # create a new venv dir
+venv/bin/pip3 install .                      # install with requirements in venv
+
+# install protocol handler
 sudo cp viscs-protocol-handler.desktop /usr/share/applications
 sudo update-desktop-database
-google-chrome # open web client and start a download, have a look at the output on the command line for debugging
+
+# open web client and start a download, have a look at the output on the command line for debugging
+google-chrome
 ```
