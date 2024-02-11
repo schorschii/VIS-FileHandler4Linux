@@ -8,6 +8,7 @@ from urllib.parse import urlparse, parse_qs, unquote, quote_plus
 import urllib.request
 import urllib_kerberos
 
+from datetime import datetime
 import hashlib
 import pyinotify
 import subprocess
@@ -80,10 +81,7 @@ def SetupKerberos():
     urllib.request.install_opener(opener)
 
 def UploadFile(filePath, uploadPath):
-    print('Source Path :', filePath)
-    print('Upload URL  :', uploadPath)
-    print()
-
+    print('Upload:', filePath, ' -> ', uploadPath)
     with open(filePath, 'rb') as file:
         try:
             # re-apply kerberos settings - dunno why this is necessary after previous GET/PROPFIND request
@@ -99,6 +97,23 @@ def UploadFile(filePath, uploadPath):
 
         notificationFinished = Notify.Notification.new('Datei wurde in VIS hochgeladen', filePath)
         notificationFinished.show()
+
+def GuessEncodingAndDecode(textBytes, codecs=['utf-8', 'cp1252', 'cp850']):
+    for codec in codecs:
+        try:
+            return textBytes.decode(codec)
+        except UnicodeDecodeError: pass
+    return textBytes.decode(sys.stdout.encoding, 'replace') # fallback: replace invalid characters
+
+def ParseFachverteiler(responseBody):
+    csvContent   = ''
+    csvSeparator = ';'
+    for row in responseBody.split(b'\x02'):
+        columns = []
+        for field in row.split(b'\x01'):
+            columns.append('"'+GuessEncodingAndDecode(field).replace('"', '\\"')+'"')
+        csvContent += csvSeparator.join(columns) + "\r\n"
+    return csvContent
 
 def main():
     Notify.init(APP_NAME)
@@ -124,8 +139,7 @@ def main():
         if('fileUrl' in parameters):
             sourcePath = parameters['fileUrl'][0].replace(' ', '%20')
             targetPath = DOWNLOAD_DIR+'/'+os.path.basename(unquote(parameters['fileUrl'][0]))
-            print('Open URL     :', sourcePath)
-            print('Target Path  :', targetPath)
+            print('Open:', sourcePath, ' -> ', targetPath)
             urllib.request.urlretrieve(sourcePath, targetPath)
             subprocess.run(['xdg-open', targetPath])
             notificationFinished = Notify.Notification.new('Datei wurde aus VIS geöffnet', targetPath)
@@ -176,39 +190,56 @@ def main():
                     fileBaseNames.append(os.path.basename(fileName))
                 postUrl = transferQueueServlet+'&uploadToTransferQueue=true&mandant='+quote_plus(parameters['mandant'][0])
                 postData = bytes('\x09'.join(fileBaseNames),'utf-8')+b'\x09' # file names, separated and finalized by 0x09, WTF
-                print('Transfer Queue Assignment:', postUrl, postData)
+                print('Transfer Queue Assignment:', postUrl, ' -> ', postData)
                 print()
                 request = urllib.request.Request(postUrl, data=postData, method='POST', headers=headers)
                 urllib.request.urlopen(request)#.getcode()
 
             # download file info
-            print('File Info URL:', transferQueueServlet)
-            print()
+            print('Get File Info:', transferQueueServlet)
             response = urllib.request.urlopen(transferQueueServlet)
-            files = response.read().split(b'\x01')
+            responseBody = response.read()
+            resultRows = responseBody.split(b'\x02')
 
-            # download files if requested
-            for fileInfos in files:
-                metadata = fileInfos.split(b'\x02')
-                if(len(metadata) < 4): continue
-                sourcePath = metadata[1].decode('utf-8')
-                targetPath = DOWNLOAD_DIR+'/'+metadata[3].decode('utf-8').strip()
-                print('Download URL :', sourcePath)
-                print('Target Path  :', targetPath)
-                print()
-                urllib.request.urlretrieve(sourcePath, targetPath)
-                notificationFinished = Notify.Notification.new('Datei wurde aus VIS heruntergeladen', targetPath)
-                #notificationFinished.add_action('clicked', 'Öffnen', openFile)
-                notificationFinished.show()
+            if(len(resultRows) > 1 and resultRows[0] == b'1'):
+                # congratulations, it's a file download
+                downloadedFiles = []
+                for fileInfos in responseBody.split(b'\x01'):
+                    metadata = fileInfos.split(b'\x02')
+                    if(len(metadata) < 4): continue
+                    sourcePath = metadata[1].decode('utf-8')
+                    targetPath = DOWNLOAD_DIR+'/'+metadata[3].decode('utf-8').strip()
+                    print('Download:', sourcePath, ' -> ', targetPath)
+                    urllib.request.urlretrieve(sourcePath, targetPath)
+                    downloadedFiles.append(targetPath)
+                if(len(downloadedFiles) > 0):
+                    notificationFinished = Notify.Notification.new('Datei wurde aus VIS heruntergeladen', "\n".join(downloadedFiles))
+                    #notificationFinished.add_action('clicked', 'Öffnen', openFile)
+                    notificationFinished.show()
+
+            elif(len(resultRows) > 1):
+                # congratulations, it's a Fachverteilerexport :))
+                csvContent = ParseFachverteiler(responseBody)
+                now = datetime.now()
+                targetPath = DOWNLOAD_DIR+'/export-'+now.strftime('%Y-%m-%d--%H-%M')+'.csv'
+                print('Target Path:', targetPath)
+                with open(targetPath, 'w') as f:
+                    f.write(csvContent)
+                    notificationFinished = Notify.Notification.new('Fachverteilerexport wurde gespeichert', targetPath)
+                    #notificationFinished.add_action('clicked', 'Öffnen', openFile)
+                    notificationFinished.show()
+
+            print()
+
 
         # end event - this closes the "Please Wait..." window
         if('eventServlet' in parameters):
             endEventServlet = parameters['eventServlet'][0]+'&EventID=endcmd&EventMsg=0&formID='+quote_plus(parameters['de.pdv.visj.WEBSTART_FORMID'][0])
             response = urllib.request.urlopen(endEventServlet)
-            print('End Event URL:', endEventServlet, response.getcode())
+            print('End Event:', endEventServlet, ' -> ', response.getcode())
             print()
 
-        print('Finished. Thank you and goodbye.')
+        print('Finished. Thank you and goodbye.', "\n")
         print()
 
     except Exception as e:
