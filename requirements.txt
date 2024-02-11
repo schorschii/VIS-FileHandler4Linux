@@ -1,3 +1,4 @@
 kerberos
 urllib_kerberos
+pyinotify
 PyQt5

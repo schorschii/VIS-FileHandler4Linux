@@ -2,13 +2,14 @@
 
 import gi
 gi.require_version('Notify', '0.7')
-from gi.repository import Notify
-from gi.repository import GLib
-from urllib.parse import urlparse
-from urllib.parse import parse_qs
-from urllib.parse import quote_plus
+from gi.repository import Notify, GLib
+
+from urllib.parse import urlparse, parse_qs, unquote, quote_plus
 import urllib.request
 import urllib_kerberos
+
+import hashlib
+import pyinotify
 import subprocess
 import traceback
 import sys, os
@@ -22,11 +23,44 @@ from PyQt5.QtGui import *
 from PyQt5.QtCore import *
 from locale import getdefaultlocale
 
+
 APP             = QApplication(sys.argv)
 APP_NAME        = 'VIS File Handler'
 PROTOCOL_SCHEME = 'viscs:'
 DOWNLOAD_DIR    = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
 
+
+class FileChangedHandler(pyinotify.ProcessEvent):
+    def my_init(self, uploadUrl, filePath, fileMd5):
+        self._uploadUrl = uploadUrl
+        self._filePath = os.path.abspath(filePath)
+        self._fileMd5 = fileMd5
+
+    # IN_CLOSE to support Softmaker Office
+    # (Does not modify the file but creates a temporary file, then deletes
+    # the original and renames the temp file to the original file name.
+    # That's why IN_MODIFY is not called.)
+    def process_IN_CLOSE_WRITE(self, event):
+        self.process_IN_MODIFY(event=event)
+
+    # IN_MODIFY to support LibreOffice
+    # (LibreOffice modifies the file directly.)
+    def process_IN_MODIFY(self, event):
+        if(self._filePath == event.pathname):
+            newFileMd5 = md5(event.pathname)
+            if(self._fileMd5 == newFileMd5):
+                print('['+event.pathname+'] file content not changed, ignoring')
+            else:
+                print('['+event.pathname+'] file content changed, omg we need to upload the file!')
+                self._fileMd5 = newFileMd5
+                UploadFile(self._filePath, self._uploadUrl)
+
+def md5(fname):
+    hash = hashlib.md5()
+    with open(fname, 'rb') as f:
+        for chunk in iter(lambda: f.read(4096), b''):
+            hash.update(chunk)
+    return hash.hexdigest()
 
 def OpenFileDialog(title, filter):
     fileNames, _ = QFileDialog.getOpenFileNames(None, title, None, filter)
@@ -45,6 +79,27 @@ def SetupKerberos():
     opener = urllib.request.build_opener(*handlers)
     urllib.request.install_opener(opener)
 
+def UploadFile(filePath, uploadPath):
+    print('Source Path :', filePath)
+    print('Upload URL  :', uploadPath)
+    print()
+
+    with open(filePath, 'rb') as file:
+        try:
+            # re-apply kerberos settings - dunno why this is necessary after previous GET/PROPFIND request
+            SetupKerberos()
+            # do the WebDAV PUT request
+            request = urllib.request.Request(uploadPath, data=file.read(), method='PUT')
+            urllib.request.urlopen(request)#.getcode()
+
+        except Exception as e:
+            # currently, there is an issue in urllib_kerberos, causing an error on success status code 201 (= Webdav file created) - we ignore this error here
+            # https://github.com/willthames/urllib_kerberos/issues/3
+            pass
+
+        notificationFinished = Notify.Notification.new('Datei wurde in VIS hochgeladen', filePath)
+        notificationFinished.show()
+
 def main():
     Notify.init(APP_NAME)
     urlToHandle = None
@@ -62,20 +117,33 @@ def main():
         parsed = urlparse(urlToHandle)
         parameters = parse_qs(parsed.query)
 
-        # kerberos setup
+        # init kerberos
         SetupKerberos()
 
         # handle preview links
         if('fileUrl' in parameters):
             sourcePath = parameters['fileUrl'][0].replace(' ', '%20')
-            targetPath = DOWNLOAD_DIR+'/'+os.path.basename(parameters['fileUrl'][0])
+            targetPath = DOWNLOAD_DIR+'/'+os.path.basename(unquote(parameters['fileUrl'][0]))
             print('Open URL     :', sourcePath)
             print('Target Path  :', targetPath)
-            print()
             urllib.request.urlretrieve(sourcePath, targetPath)
             subprocess.run(['xdg-open', targetPath])
             notificationFinished = Notify.Notification.new('Datei wurde aus VIS geöffnet', targetPath)
             notificationFinished.show()
+
+            # set up file watcher
+            wm = pyinotify.WatchManager()
+            wm.add_watch(DOWNLOAD_DIR, pyinotify.IN_MODIFY | pyinotify.IN_CLOSE_WRITE)
+            notifier = pyinotify.ThreadedNotifier(wm,
+                FileChangedHandler(
+                    filePath = targetPath,
+                    uploadUrl = sourcePath,
+                    fileMd5 = md5(targetPath)
+                )
+            )
+            notifier.start()
+            print('File watcher is now active!')
+            print()
 
         # handle up-/downloads
         elif('transferQueueServlet' in parameters):
@@ -98,21 +166,8 @@ def main():
                         # HTTPError 404 means no file exists with this name -> we can upload it without questions
                         pass
 
-                    # open file and upload it
-                    print('Source Path :', fileName)
-                    print('Upload URL  :', uploadPath)
-                    print()
-                    with open(fileName,'rb') as file:
-                        try:
-                            # re-apply kerberos settings - dunno why this is necessary after previous GET/PROPFIND request
-                            SetupKerberos()
-                            # currently, there is an issue in urllib_kerberos, causing an error on success status code 201 (= Webdav file created) - we ignore this error here
-                            # https://github.com/willthames/urllib_kerberos/issues/3
-                            request = urllib.request.Request(uploadPath, data=file.read(), method='PUT')
-                            urllib.request.urlopen(request)#.getcode()
-                        except Exception as e: pass
-                        notificationFinished = Notify.Notification.new('Datei wurde in VIS hochgeladen', fileName)
-                        notificationFinished.show()
+                    # upload it
+                    UploadFile(fileName, uploadPath)
 
                 # assign upload to transfer queue - not truly necessary, but makes the uploaded file directly visible on the website without manual refresh
                 headers = {'Content-Type':''} # urllib's default content type "application/x-www-form-urlencoded" confuses the VIS server
@@ -153,7 +208,7 @@ def main():
             print('End Event URL:', endEventServlet, response.getcode())
             print()
 
-        print('Finished! Thank you and goodbye.')
+        print('Finished. Thank you and goodbye.')
         print()
 
     except Exception as e:
