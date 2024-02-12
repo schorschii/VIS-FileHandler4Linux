@@ -2,7 +2,8 @@
 
 import gi
 gi.require_version('Notify', '0.7')
-from gi.repository import Notify, GLib
+gi.require_version('Gtk', '3.0')
+from gi.repository import Notify, GLib, Gtk
 
 from urllib.parse import urlparse, parse_qs, unquote, quote_plus
 import urllib.request
@@ -15,17 +16,7 @@ import subprocess
 import traceback
 import sys, os
 
-# gtk2 theme is more convenient when it comes to
-# selecting files from network shares using QFileDialog (on linux)
-if os.environ.get('QT_QPA_PLATFORMTHEME') == 'qt5ct':
-	os.environ['QT_QPA_PLATFORMTHEME'] = 'gtk2'
-from PyQt5.QtWidgets import *
-from PyQt5.QtGui import *
-from PyQt5.QtCore import *
-from locale import getdefaultlocale
 
-
-APP             = QApplication(sys.argv)
 APP_NAME        = 'VIS File Handler'
 PROTOCOL_SCHEME = 'viscs:'
 DOWNLOAD_DIR    = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
@@ -64,16 +55,36 @@ def md5(fname):
     return hash.hexdigest()
 
 def OpenFileDialog(title, filter):
-    fileNames, _ = QFileDialog.getOpenFileNames(None, title, None, filter)
-    return fileNames
+    dialog1 = Gtk.FileChooserDialog(
+        title = 'Bitte Dateien für VIS-Upload auswählen',
+        parent = None, action = Gtk.FileChooserAction.OPEN
+    )
+    dialog1.add_buttons(
+        Gtk.STOCK_CANCEL,
+        Gtk.ResponseType.CANCEL,
+        Gtk.STOCK_OPEN,
+        Gtk.ResponseType.OK,
+    )
+    dialog1.set_select_multiple(True)
+    response = dialog1.run()
+    files = dialog1.get_filenames()
+    dialog1.close()
+    dialog1.destroy()
+    if(response == Gtk.ResponseType.OK):
+        return files
+    else:
+        return []
 
 def WarningDialog(title, text):
-    msg = QMessageBox()
-    msg.setIcon(QMessageBox.Warning)
-    msg.setWindowTitle(title)
-    msg.setText(text)
-    msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-    return (msg.exec_() == QMessageBox.Yes)
+    dialog = Gtk.MessageDialog(
+        destroy_with_parent = True,
+        text = title, secondary_text = text,
+        buttons = Gtk.ButtonsType.YES_NO
+    )
+    response = dialog.run()
+    dialog.close()
+    dialog.destroy()
+    return (response == Gtk.ResponseType.YES)
 
 def SetupKerberos():
     handlers = [urllib_kerberos.HTTPKerberosAuthHandler()]
@@ -115,6 +126,19 @@ def ParseFachverteiler(responseBody):
         csvContent += csvSeparator.join(columns) + "\r\n"
     return csvContent
 
+def OpenFile(notification, event):
+    for path in notification.filePaths:
+        print('Open Downloaded File:', path)
+        subprocess.run(['xdg-open', path])
+
+def QuitWatcher(notification, event):
+    notification.notifier.stop()
+    Gtk.main_quit()
+
+def NotificationClosed(notification):
+    notification.notifier.stop()
+    Gtk.main_quit()
+
 def main():
     Notify.init(APP_NAME)
     urlToHandle = None
@@ -142,8 +166,6 @@ def main():
             print('Open:', sourcePath, ' -> ', targetPath)
             urllib.request.urlretrieve(sourcePath, targetPath)
             subprocess.run(['xdg-open', targetPath])
-            notificationFinished = Notify.Notification.new('Datei wurde aus VIS geöffnet', targetPath)
-            notificationFinished.show()
 
             # set up file watcher
             wm = pyinotify.WatchManager()
@@ -158,6 +180,13 @@ def main():
             notifier.start()
             print('File watcher is now active!')
             print()
+
+            # show info
+            notification = Notify.Notification.new('Datei wurde aus VIS geöffnet', targetPath + ' wird auf Änderungen überwacht')
+            notification.notifier = notifier
+            notification.connect('closed', NotificationClosed)
+            notification.add_action('clicked', 'Überwachung beenden', QuitWatcher)
+            notification.show()
 
         # handle up-/downloads
         elif('transferQueueServlet' in parameters):
@@ -213,9 +242,10 @@ def main():
                     urllib.request.urlretrieve(sourcePath, targetPath)
                     downloadedFiles.append(targetPath)
                 if(len(downloadedFiles) > 0):
-                    notificationFinished = Notify.Notification.new('Datei wurde aus VIS heruntergeladen', "\n".join(downloadedFiles))
-                    #notificationFinished.add_action('clicked', 'Öffnen', openFile)
-                    notificationFinished.show()
+                    notification = Notify.Notification.new('Datei(en) wurde(n) aus VIS heruntergeladen', "\n".join(downloadedFiles))
+                    notification.filePaths = downloadedFiles
+                    notification.add_action('clicked', 'Alle öffnen', OpenFile)
+                    notification.show()
 
             elif(len(resultRows) > 1):
                 # congratulations, it's a Fachverteilerexport :))
@@ -225,12 +255,12 @@ def main():
                 print('Target Path:', targetPath)
                 with open(targetPath, 'w') as f:
                     f.write(csvContent)
-                    notificationFinished = Notify.Notification.new('Fachverteilerexport wurde gespeichert', targetPath)
-                    #notificationFinished.add_action('clicked', 'Öffnen', openFile)
-                    notificationFinished.show()
+                    notification = Notify.Notification.new('Fachverteilerexport wurde gespeichert', targetPath)
+                    notification.filePaths = [targetPath]
+                    notification.add_action('clicked', 'Öffnen', OpenFile)
+                    notification.show()
 
             print()
-
 
         # end event - this closes the "Please Wait..." window
         if('eventServlet' in parameters):
@@ -239,6 +269,7 @@ def main():
             print('End Event:', endEventServlet, ' -> ', response.getcode())
             print()
 
+        Gtk.main()
         print('Finished. Thank you and goodbye.', "\n")
         print()
 

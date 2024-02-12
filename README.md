@@ -6,7 +6,7 @@ The web based VIS application does not use standard web technologies for up- and
 ## Installation
 ```
 # install system-wide dependencies from Debian/Ubuntu repos
-apt install python3-pip python3-pyqt5 python3-venv python3-pyinotify
+apt install python3-pip python3-venv python3-pyinotify
 
 # create a new Python venv dir
 python3 -m venv --system-site-packages venv
