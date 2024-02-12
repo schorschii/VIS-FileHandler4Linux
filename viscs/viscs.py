@@ -130,13 +130,16 @@ def OpenFile(notification, event):
     for path in notification.filePaths:
         print('Open Downloaded File:', path)
         subprocess.run(['xdg-open', path])
+    Gtk.main_quit()
 
 def QuitWatcher(notification, event):
-    notification.notifier.stop()
+    if(hasattr(notification, 'notifier')):
+        notification.notifier.stop()
     Gtk.main_quit()
 
 def NotificationClosed(notification):
-    notification.notifier.stop()
+    if(hasattr(notification, 'notifier')):
+        notification.notifier.stop()
     Gtk.main_quit()
 
 def main():
@@ -244,6 +247,7 @@ def main():
                 if(len(downloadedFiles) > 0):
                     notification = Notify.Notification.new('Datei(en) wurde(n) aus VIS heruntergeladen', "\n".join(downloadedFiles))
                     notification.filePaths = downloadedFiles
+                    notification.connect('closed', NotificationClosed)
                     notification.add_action('clicked', 'Alle öffnen', OpenFile)
                     notification.show()
 
@@ -257,6 +261,7 @@ def main():
                     f.write(csvContent)
                     notification = Notify.Notification.new('Fachverteilerexport wurde gespeichert', targetPath)
                     notification.filePaths = [targetPath]
+                    notification.connect('closed', NotificationClosed)
                     notification.add_action('clicked', 'Öffnen', OpenFile)
                     notification.show()
 
