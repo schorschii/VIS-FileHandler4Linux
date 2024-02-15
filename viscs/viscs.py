@@ -93,6 +93,11 @@ def SetupKerberos():
 
 def UploadFile(filePath, uploadPath):
     print('Upload:', filePath, ' -> ', uploadPath)
+
+    # show notification
+    notificationFinished = Notify.Notification.new('Datei wird in VIS hochgeladen...', filePath)
+    notificationFinished.show()
+
     with open(filePath, 'rb') as file:
         try:
             # re-apply kerberos settings - dunno why this is necessary after previous GET/PROPFIND request
@@ -106,7 +111,8 @@ def UploadFile(filePath, uploadPath):
             # https://github.com/willthames/urllib_kerberos/issues/3
             pass
 
-        notificationFinished = Notify.Notification.new('Datei wurde in VIS hochgeladen', filePath)
+        # update notification
+        notificationFinished.update('Datei wurde in VIS hochgeladen', filePath)
         notificationFinished.show()
 
 def GuessEncodingAndDecode(textBytes, codecs=['utf-8', 'cp1252', 'cp850']):
@@ -235,18 +241,31 @@ def main():
 
             if(len(resultRows) > 1 and resultRows[0] == b'1'):
                 # congratulations, it's a file download
-                downloadedFiles = []
+                files = {}
                 for fileInfos in responseBody.split(b'\x01'):
                     metadata = fileInfos.split(b'\x02')
                     if(len(metadata) < 4): continue
                     sourcePath = metadata[1].decode('utf-8')
                     targetPath = DOWNLOAD_DIR+'/'+metadata[3].decode('utf-8').strip()
+                    files[targetPath] = sourcePath
+
+                # show notification
+                filePaths = []
+                for targetPath, sourcePath in files.items():
+                    filePaths.append(targetPath)
+                if(len(filePaths) > 0):
+                    notification = Notify.Notification.new('Dateien werden aus VIS heruntergeladen...', "\n".join(filePaths))
+                    notification.filePaths = filePaths
+                    notification.show()
+
+                # execute the download(s)
+                for targetPath, sourcePath in files.items():
                     print('Download:', sourcePath, ' -> ', targetPath)
                     urllib.request.urlretrieve(sourcePath, targetPath)
-                    downloadedFiles.append(targetPath)
-                if(len(downloadedFiles) > 0):
-                    notification = Notify.Notification.new('Datei(en) wurde(n) aus VIS heruntergeladen', "\n".join(downloadedFiles))
-                    notification.filePaths = downloadedFiles
+
+                # update notification
+                if(len(filePaths) > 0):
+                    notification.update('Dateien wurden aus VIS heruntergeladen', "\n".join(filePaths))
                     notification.connect('closed', NotificationClosed)
                     notification.add_action('clicked', 'Alle öffnen', OpenFile)
                     notification.show()
