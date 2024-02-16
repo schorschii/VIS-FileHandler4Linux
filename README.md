@@ -4,30 +4,30 @@ File download, upload and preview handler for the VIS document management system
 The web based VIS application does not use standard web technologies for up- and downloading; a special `viscs://` url handler is needed on the client side to to upload, download and preview files.
 
 ## Installation
-```
-# install system-wide dependencies from Debian/Ubuntu repos
-apt install python3-pip python3-venv python3-pyinotify libkrb5-dev
+1. Install system-wide dependencies from Debian/Ubuntu repos.
+   ```
+   apt install python3-pip python3-venv python3-pyinotify libkrb5-dev
+   ```
 
-# create a new Python venv dir
-python3 -m venv --system-site-packages venv
+2. Create a new Python venv dir and install it with requirements which are not available in Debian/Ubuntu repos in the venv.
+   ```
+   python3 -m venv --system-site-packages venv
+   venv/bin/pip3 install .
+   ```
 
-# install it with requirements which are not available in Debian/Ubuntu repos in the venv
-venv/bin/pip3 install .
-
-# install protocol handler, make sure that the path to `venv/bin/viscs` is correct
-sudo cp viscs-protocol-handler.desktop /usr/share/applications
-sudo update-desktop-database
-```
+3. Install protocol handler, make sure that the path to `venv/bin/viscs` is correct.
+   ```
+   sudo cp viscs-protocol-handler.desktop /usr/share/applications
+   sudo update-desktop-database
+   ```
 
 ## Usage
-```
-# make sure you have a valid kerberos ticket
-klist
+1. Make sure you have a valid kerberos ticket using `klist`. Get a ticket if necessary with `kinit user@DOMAIN.COM`.
 
-# get a ticket if necessary
-kinit user@DOMAIN.COM
+2. Your browser must be configured to redirect the kerberos ticket.
+   - Chrome: policy "AuthServerAllowlist"
+   - Firefox: policy "Authentication": {"SPNEGO": ["domain.com"]} or setting `network.negotiate-auth.trusted-uris` in "about:config"
 
-# your browser must be configured to redirect the kerberos ticket (policy "AuthServerAllowlist" in Chrome, "Authentication": {"SPNEGO": ["domain.com"]} in Firefox)
-# open web client and start a download, have a look at the output on the command line for debugging
-google-chrome
-```
+3. Open a browser in terminal and navigate to the web client. Start a download and have a look at the output on the command line for debugging. A desktop notification will appear informing you about the current file handler background activity.
+
+   Note: When editing a file, the file monitoring will be cancelled as soon as the desktop notification is closed. Make sure that the notification is visible until you finished editing your document.
