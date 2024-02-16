@@ -30,4 +30,4 @@ The web based VIS application does not use standard web technologies for up- and
 
 3. Open a browser in terminal and navigate to the web client. Start a download and have a look at the output on the command line for debugging. A desktop notification will appear informing you about the current file handler background activity.
 
-   Note: When editing a file, the file monitoring will be cancelled as soon as the desktop notification is closed. Make sure that the notification is visible until you finished editing your document.
+   Note: When editing a file, the file monitoring will be cancelled as soon as the desktop notification is closed. Make sure that the notification is visible until you finished editing your document. If you closed the notification accidentally, you can still upload the file manually.
