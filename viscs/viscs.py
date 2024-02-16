@@ -45,7 +45,14 @@ class FileChangedHandler(pyinotify.ProcessEvent):
             else:
                 print('['+event.pathname+'] file content changed, omg we need to upload the file!')
                 self._fileMd5 = newFileMd5
+                # show notification
+                notification = Notify.Notification.new('Dateien werden in VIS hochgeladen...', self._filePath)
+                notification.show()
+                # do upload
                 UploadFile(self._filePath, self._uploadUrl)
+                # update notification
+                notification.update('Dateien wurden in VIS hochgeladen', self._filePath)
+                notification.show()
 
 def md5(fname):
     hash = hashlib.md5()
@@ -93,11 +100,6 @@ def SetupKerberos():
 
 def UploadFile(filePath, uploadPath):
     print('Upload:', filePath, ' -> ', uploadPath)
-
-    # show notification
-    notificationFinished = Notify.Notification.new('Datei wird in VIS hochgeladen...', filePath)
-    notificationFinished.show()
-
     with open(filePath, 'rb') as file:
         try:
             # re-apply kerberos settings - dunno why this is necessary after previous GET/PROPFIND request
@@ -110,10 +112,6 @@ def UploadFile(filePath, uploadPath):
             # currently, there is an issue in urllib_kerberos, causing an error on success status code 201 (= Webdav file created) - we ignore this error here
             # https://github.com/willthames/urllib_kerberos/issues/3
             pass
-
-        # update notification
-        notificationFinished.update('Datei wurde in VIS hochgeladen', filePath)
-        notificationFinished.show()
 
 def GuessEncodingAndDecode(textBytes, codecs=['utf-8', 'cp1252', 'cp850']):
     for codec in codecs:
@@ -204,9 +202,15 @@ def main():
             # upload selected shit if requested
             if('uploadPath' in parameters):
                 fileNames = OpenFileDialog('VIS File Upload', 'All Files (*.*)')
+
+                if(len(fileNames) > 0):
+                    # show notification
+                    notification = Notify.Notification.new('Dateien werden in VIS hochgeladen...', "\n".join(fileNames))
+                    notification.show()
+
+                realUploads = []
                 for fileName in fileNames:
                     uploadPath = parameters['uploadPath'][0]+'/'+quote_plus(os.path.basename(fileName))
-
                     # check if file already exists and show warning
                     try:
                         # due to the urllib_kerberos bug mentioned below, we currently cannot use PROPFIND here, which would be more performant since it does not download the file
@@ -217,9 +221,18 @@ def main():
                     except Exception as e:
                         # HTTPError 404 means no file exists with this name -> we can upload it without questions
                         pass
-
                     # upload it
                     UploadFile(fileName, uploadPath)
+                    realUploads.append(fileName)
+
+                if(len(fileNames) > 0):
+                    # update notification
+                    fileNamesString = "\n".join(realUploads)
+                    if(fileNamesString == ''):
+                        notification.update('VIS-Upload abgebrochen', 'Keine Dateien')
+                    else:
+                        notification.update('Dateien wurden in VIS hochgeladen', fileNamesString)
+                    notification.show()
 
                 # assign upload to transfer queue - not truly necessary, but makes the uploaded file directly visible on the website without manual refresh
                 headers = {'Content-Type':''} # urllib's default content type "application/x-www-form-urlencoded" confuses the VIS server
