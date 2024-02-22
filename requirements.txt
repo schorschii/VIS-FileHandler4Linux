@@ -1,3 +1,4 @@
-kerberos
+winkerberos; sys_platform == "win32"
+kerberos; sys_platform != "win32"
 urllib_kerberos
-pyinotify
+pyinotify; sys_platform != "win32"
