@@ -156,6 +156,25 @@ def NotificationClosed(notification):
         notification.notifier.stop()
     Gtk.main_quit()
 
+def getTargetPath(downloadDir, fileName):
+    testName = downloadDir + '/' + fileName
+    if(not os.path.isfile(testName)):
+        return testName
+    print('Already exists:', testName, ' - appending a number...', flush=True)
+
+    fileParts = fileName.rsplit('.', 1)
+    fileName = fileParts[0]
+    fileExt = ''
+    if(len(fileParts) > 1): fileExt = fileParts[1]
+
+    counter = 0
+    while True:
+        counter += 1
+        testName = downloadDir + '/' + fileName + ' ('+str(counter)+')' + '.' + fileExt
+        if(not os.path.isfile(testName)):
+            return testName
+        print('Already exists:', testName, ' - trying next number...', flush=True)
+
 def main():
     try:
         print('Welcome to the VIS-FileHandler4Linux '+__version__+', inofficial Linux port (c) Georg Sieber 2024', flush=True)
@@ -188,7 +207,7 @@ def main():
         # handle preview links
         if('fileUrl' in parameters):
             sourcePath = parameters['fileUrl'][0].replace(' ', '%20')
-            targetPath = DOWNLOAD_DIR+'/'+os.path.basename(unquote(parameters['fileUrl'][0]))
+            targetPath = getTargetPath(DOWNLOAD_DIR, os.path.basename(unquote(parameters['fileUrl'][0])))
             print('Open:', sourcePath, ' -> ', targetPath, flush=True)
             r = requests.get(sourcePath, auth=HTTPKerberosAuth(mutual_authentication=OPTIONAL))
             r.raise_for_status()
