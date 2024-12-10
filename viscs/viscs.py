@@ -3,8 +3,8 @@
 from . import __version__
 
 from urllib.parse import urlparse, parse_qs, unquote, quote_plus
-import urllib.request
-import urllib_kerberos
+import requests
+from requests_kerberos import HTTPKerberosAuth, OPTIONAL
 
 from datetime import datetime
 import hashlib
@@ -49,9 +49,9 @@ else:
             if(self._filePath == event.pathname):
                 newFileMd5 = md5(event.pathname)
                 if(self._fileMd5 == newFileMd5):
-                    print('['+event.pathname+'] file content not changed, ignoring')
+                    print('['+event.pathname+'] file content not changed, ignoring', flush=True)
                 else:
-                    print('['+event.pathname+'] file content changed, omg we need to upload the file!')
+                    print('['+event.pathname+'] file content changed, omg we need to upload the file!', flush=True)
                     self._fileMd5 = newFileMd5
                     # show notification
                     notification = notify(None, 'Dateien werden in VIS hochgeladen...', self._filePath)
@@ -123,46 +123,26 @@ def WarningDialog(title, text):
     dialog.destroy()
     return (response == Gtk.ResponseType.YES)
 
-def SetupKerberos():
-    handlers = [urllib_kerberos.HTTPKerberosAuthHandler()]
-    opener = urllib.request.build_opener(*handlers)
-    urllib.request.install_opener(opener)
-
 def UploadFile(filePath, uploadPath):
-    print('Upload:', filePath, ' -> ', uploadPath)
+    print('Upload:', filePath, ' -> ', uploadPath, flush=True)
     with open(filePath, 'rb') as file:
-        try:
-            # re-apply kerberos settings - dunno why this is necessary after previous GET/PROPFIND request
-            SetupKerberos()
-            # do the WebDAV PUT request
-            request = urllib.request.Request(uploadPath, data=file.read(), method='PUT')
-            urllib.request.urlopen(request)#.getcode()
-
-        except Exception as e:
-            # currently, there is an issue in urllib_kerberos, causing an error on success status code 201 (= Webdav file created) - we ignore this error here
-            # https://github.com/willthames/urllib_kerberos/issues/3
-            pass
-
-def GuessEncodingAndDecode(textBytes, codecs=['utf-8', 'cp1252', 'cp850']):
-    for codec in codecs:
-        try:
-            return textBytes.decode(codec)
-        except UnicodeDecodeError: pass
-    return textBytes.decode(sys.stdout.encoding, 'replace') # fallback: replace invalid characters
+        # do the WebDAV PUT request
+        r = requests.put(uploadPath, data=file, auth=HTTPKerberosAuth(mutual_authentication=OPTIONAL))
+        r.raise_for_status()
 
 def ParseFachverteiler(responseBody):
     csvContent   = ''
     csvSeparator = ';'
-    for row in responseBody.split(b'\x02'):
+    for row in responseBody.split('\x02'):
         columns = []
-        for field in row.split(b'\x01'):
-            columns.append('"'+GuessEncodingAndDecode(field).replace('"', '\\"')+'"')
+        for field in row.split('\x01'):
+            columns.append('"'+field.replace('"', '\\"')+'"')
         csvContent += csvSeparator.join(columns) + "\r\n"
     return csvContent
 
 def OpenFile(notification, event):
     for path in notification.filePaths:
-        print('Open Downloaded File:', path)
+        print('Open Downloaded File:', path, flush=True)
         subprocess.run(['xdg-open', path])
     Gtk.main_quit()
 
@@ -178,13 +158,13 @@ def NotificationClosed(notification):
 
 def main():
     try:
-        print('Welcome to the VIS-FileHandler4Linux '+__version__+', inofficial Linux port (c) Georg Sieber 2024')
+        print('Welcome to the VIS-FileHandler4Linux '+__version__+', inofficial Linux port (c) Georg Sieber 2024', flush=True)
 
         # init notifications, Linux only
         try:
             Notify.init('VIS File Handler')
         except NameError as e:
-            print(str(e))
+            print(str(e), flush=True)
 
         # check parameter
         urlToHandle = None
@@ -205,15 +185,16 @@ def main():
         parsed = urlparse(urlToHandle)
         parameters = parse_qs(parsed.query)
 
-        # init kerberos
-        SetupKerberos()
-
         # handle preview links
         if('fileUrl' in parameters):
             sourcePath = parameters['fileUrl'][0].replace(' ', '%20')
             targetPath = DOWNLOAD_DIR+'/'+os.path.basename(unquote(parameters['fileUrl'][0]))
-            print('Open:', sourcePath, ' -> ', targetPath)
-            urllib.request.urlretrieve(sourcePath, targetPath)
+            print('Open:', sourcePath, ' -> ', targetPath, flush=True)
+            r = requests.get(sourcePath, auth=HTTPKerberosAuth(mutual_authentication=OPTIONAL))
+            r.raise_for_status()
+            with open(targetPath, 'wb') as fd:
+                fd.write(r.content)
+
             if(sys.platform == 'win32'):
                 os.startfile(targetPath)
             else:
@@ -230,8 +211,8 @@ def main():
                     )
                 )
                 notifier.start()
-                print('File watcher is now active!')
-                print()
+                print('File watcher is now active!', flush=True)
+                print(flush=True)
 
             # show info
             notification = notify(None,
@@ -258,15 +239,12 @@ def main():
                 for fileName in fileNames:
                     uploadPath = parameters['uploadPath'][0]+'/'+quote_plus(os.path.basename(fileName))
                     # check if file already exists and show warning
-                    try:
-                        # due to the urllib_kerberos bug mentioned below, we currently cannot use PROPFIND here, which would be more performant since it does not download the file
-                        request = urllib.request.Request(uploadPath, method='GET')
-                        if(urllib.request.urlopen(request).getcode() == 200
-                        and not WarningDialog('Dateikonflikt', 'Die Datei »%s« existiert bereits. Überschreiben?' % os.path.basename(fileName))):
-                            continue
-                    except Exception as e:
-                        # HTTPError 404 means no file exists with this name -> we can upload it without questions
-                        pass
+                    r = requests.request('PROPFIND', url=uploadPath, auth=HTTPKerberosAuth(mutual_authentication=OPTIONAL))
+                    print('Check if file exists:', uploadPath, ' - ', r.status_code)
+                    print(flush=True)
+                    if((r.status_code >= 200 and r.status_code <= 299)
+                    and not WarningDialog('Dateikonflikt', 'Die Datei »%s« existiert bereits. Überschreiben?' % os.path.basename(fileName))):
+                        continue
                     # upload it
                     UploadFile(fileName, uploadPath)
                     realUploads.append(fileName)
@@ -286,25 +264,26 @@ def main():
                     fileBaseNames.append(os.path.basename(fileName))
                 postUrl = transferQueueServlet+'&uploadToTransferQueue=true&mandant='+quote_plus(parameters['mandant'][0])
                 postData = bytes('\x09'.join(fileBaseNames),'utf-8')+b'\x09' # file names, separated and finalized by 0x09, WTF
-                print('Transfer Queue Assignment:', postUrl, ' -> ', postData)
-                print()
-                request = urllib.request.Request(postUrl, data=postData, method='POST', headers=headers)
-                urllib.request.urlopen(request)#.getcode()
+                print('Transfer Queue Assignment:', postUrl, ' -> ', postData, flush=True)
+                print(flush=True)
+                r = requests.post(postUrl, data=postData, headers=headers, auth=HTTPKerberosAuth(mutual_authentication=OPTIONAL))
+                r.raise_for_status()
 
             # download file info
-            print('Get File Info:', transferQueueServlet)
-            response = urllib.request.urlopen(transferQueueServlet)
-            responseBody = response.read()
-            resultRows = responseBody.split(b'\x02')
+            print('Get File Info:', transferQueueServlet, flush=True)
+            r = requests.get(transferQueueServlet, auth=HTTPKerberosAuth(mutual_authentication=OPTIONAL))
+            r.raise_for_status()
+            responseBody = r.text
+            resultRows = responseBody.split('\x02')
 
-            if(len(resultRows) > 1 and resultRows[0] == b'1'):
+            if(len(resultRows) > 1 and resultRows[0] == '1'):
                 # congratulations, it's a file download
                 files = {}
-                for fileInfos in responseBody.split(b'\x01'):
-                    metadata = fileInfos.split(b'\x02')
+                for fileInfos in responseBody.split('\x01'):
+                    metadata = fileInfos.split('\x02')
                     if(len(metadata) < 4): continue
-                    sourcePath = metadata[1].decode('utf-8')
-                    targetPath = DOWNLOAD_DIR+'/'+metadata[3].decode('utf-8').strip()
+                    sourcePath = metadata[1]
+                    targetPath = DOWNLOAD_DIR+'/'+metadata[3].strip()
                     files[targetPath] = sourcePath
 
                 # show notification
@@ -317,8 +296,11 @@ def main():
 
                 # execute the download(s)
                 for targetPath, sourcePath in files.items():
-                    print('Download:', sourcePath, ' -> ', targetPath)
-                    urllib.request.urlretrieve(sourcePath, targetPath)
+                    print('Download:', sourcePath, ' -> ', targetPath, flush=True)
+                    r = requests.get(sourcePath, auth=HTTPKerberosAuth(mutual_authentication=OPTIONAL))
+                    r.raise_for_status()
+                    with open(targetPath, 'wb') as fd:
+                        fd.write(r.content)
 
                 # update notification
                 if(len(filePaths) > 0):
@@ -334,7 +316,7 @@ def main():
                 csvContent = ParseFachverteiler(responseBody)
                 now = datetime.now()
                 targetPath = DOWNLOAD_DIR+'/export-'+now.strftime('%Y-%m-%d--%H-%M')+'.csv'
-                print('Target Path:', targetPath)
+                print('Target Path:', targetPath, flush=True)
                 with open(targetPath, 'w') as f:
                     f.write(csvContent)
                     notification = notify(None,
@@ -345,26 +327,26 @@ def main():
                     )
                     if(notification): notification.filePaths = [targetPath]
 
-            print()
+            print(flush=True)
 
         # end event - this closes the "Please Wait..." window
         if('eventServlet' in parameters):
             endEventServlet = parameters['eventServlet'][0]+'&EventID=endcmd&EventMsg=0&formID='+quote_plus(parameters['de.pdv.visj.WEBSTART_FORMID'][0])
-            response = urllib.request.urlopen(endEventServlet)
-            print('End Event:', endEventServlet, ' -> ', response.getcode())
-            print()
+            r = requests.get(endEventServlet, auth=HTTPKerberosAuth(mutual_authentication=OPTIONAL))
+            print('End Event:', endEventServlet, ' - ', r.status_code, flush=True)
+            print(flush=True)
 
         # start Gtk GUI mainloop, Linux only
         try:
             Gtk.main()
         except NameError as e:
-            print(str(e))
+            print(str(e), flush=True)
 
-        print('Finished. Thank you and goodbye..', "\n")
-        print()
+        print('Finished. Thank you and goodbye..', "\n", flush=True)
+        print(flush=True)
 
     except Exception as e:
-        print(traceback.format_exc())
+        print(traceback.format_exc(), flush=True)
         if(sys.platform == 'win32'): input()
         notify(None, 'VIS File Handler Fehler', str(e))
 

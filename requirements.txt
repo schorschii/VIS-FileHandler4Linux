@@ -1,4 +1,5 @@
 winkerberos; sys_platform == "win32"
 kerberos; sys_platform != "win32"
-urllib_kerberos
+requests_kerberos
+
 pyinotify; sys_platform != "win32"
