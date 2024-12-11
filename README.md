@@ -24,20 +24,10 @@ The web based VIS application does not use standard web technologies for up- and
 ## Usage
 1. Make sure you have a valid kerberos ticket using `klist`. Get a ticket if necessary with `kinit user@DOMAIN.COM`.
 
-2. Your browser must be configured to redirect the kerberos ticket.
+2. Your browser must be configured to use the kerberos ticket.
    - Chrome: policy "AuthServerAllowlist"
    - Firefox: policy "Authentication": {"SPNEGO": ["domain.com"]} or setting `network.negotiate-auth.trusted-uris` in "about:config"
 
 3. Open a browser in terminal and navigate to the web client. Start a download and have a look at the output on the command line for debugging. A desktop notification will appear informing you about the current file handler background activity.
 
    Note: When editing a file, the file monitoring will be cancelled as soon as the desktop notification is closed. Make sure that the notification is visible until you finished editing your document. If you closed the notification accidentally, you can still upload the file manually.
-
-## Windows port?!!
-Because of problems with the proxy servers in between, file uploads aborted randomly. This only happens because of the chunked transfer encoding used by the original WebClient AddOn/SmartClient. Since my implementation doesn't use chunked transfer encoding, all file uploads work flawlessly. That's why it's ported to Windows too.
-
-To make it work, you need to point the protocol handler in the registry to the python executable:
-```
-HKLM\SOFTWARE\Classes\viscs\shell\open\command (default value)
---- or per user ---
-HKCU\SOFTWARE\Classes\viscs\shell\open\command (default value)
-```

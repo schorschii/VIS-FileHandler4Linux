@@ -12,70 +12,59 @@ import subprocess
 import traceback
 import sys, os
 
-if(sys.platform == 'win32'):
-    import tkinter as tk
-    from tkinter import filedialog
-else:
-    import gi
-    gi.require_version('Notify', '0.7')
-    gi.require_version('Gtk', '3.0')
-    from gi.repository import Notify, GLib, Gtk
-    import pyinotify
+import gi
+gi.require_version('Notify', '0.7')
+gi.require_version('Gtk', '3.0')
+from gi.repository import Notify, GLib, Gtk
+import pyinotify
 
 
 PROTOCOL_SCHEME = 'viscs:'
 DOWNLOAD_DIR    = '.'
 
 
-if(sys.platform == 'win32'):
-    pass
-else:
-    class FileChangedHandler(pyinotify.ProcessEvent):
-        def my_init(self, uploadUrl, filePath, fileMd5):
-            self._uploadUrl = uploadUrl
-            self._filePath = os.path.abspath(filePath)
-            self._fileMd5 = fileMd5
+class FileChangedHandler(pyinotify.ProcessEvent):
+    def my_init(self, uploadUrl, filePath, fileMd5):
+        self._uploadUrl = uploadUrl
+        self._filePath = os.path.abspath(filePath)
+        self._fileMd5 = fileMd5
 
-        # IN_CLOSE to support Softmaker Office
-        # (Does not modify the file but creates a temporary file, then deletes
-        # the original and renames the temp file to the original file name.
-        # That's why IN_MODIFY is not called.)
-        def process_IN_CLOSE_WRITE(self, event):
-            self.process_IN_MODIFY(event=event)
+    # IN_CLOSE to support Softmaker Office
+    # (Does not modify the file but creates a temporary file, then deletes
+    # the original and renames the temp file to the original file name.
+    # That's why IN_MODIFY is not called.)
+    def process_IN_CLOSE_WRITE(self, event):
+        self.process_IN_MODIFY(event=event)
 
-        # IN_MODIFY to support LibreOffice
-        # (LibreOffice modifies the file directly.)
-        def process_IN_MODIFY(self, event):
-            if(self._filePath == event.pathname):
-                newFileMd5 = md5(event.pathname)
-                if(self._fileMd5 == newFileMd5):
-                    print('['+event.pathname+'] file content not changed, ignoring', flush=True)
-                else:
-                    print('['+event.pathname+'] file content changed, omg we need to upload the file!', flush=True)
-                    self._fileMd5 = newFileMd5
-                    # show notification
-                    notification = notify(None, 'Dateien werden in VIS hochgeladen...', self._filePath)
-                    # do upload
-                    UploadFile(self._filePath, self._uploadUrl)
-                    # update notification
-                    notify(notification, 'Dateien wurden in VIS hochgeladen', self._filePath)
+    # IN_MODIFY to support LibreOffice
+    # (LibreOffice modifies the file directly.)
+    def process_IN_MODIFY(self, event):
+        if(self._filePath == event.pathname):
+            newFileMd5 = md5(event.pathname)
+            if(self._fileMd5 == newFileMd5):
+                print('['+event.pathname+'] file content not changed, ignoring', flush=True)
+            else:
+                print('['+event.pathname+'] file content changed, omg we need to upload the file!', flush=True)
+                self._fileMd5 = newFileMd5
+                # show notification
+                notification = notify(None, 'Dateien werden in VIS hochgeladen...', self._filePath)
+                # do upload
+                UploadFile(self._filePath, self._uploadUrl)
+                # update notification
+                notify(notification, 'Dateien wurden in VIS hochgeladen', self._filePath)
 
 def notify(notification, title, message, closedAction=None, actions=None):
-    if(sys.platform == 'win32'):
-        print(title, ':', message, "\n")
-        return None
+    if(not notification):
+        notification = Notify.Notification.new(title, message)
     else:
-        if(not notification):
-            notification = Notify.Notification.new(title, message)
-        else:
-            notification.update(title, message)
-        if(closedAction):
-            notification.connect('closed', closedAction)
-        if(actions):
-            for title, func in actions.items():
-                notification.add_action('clicked', title, func)
-        notification.show()
-        return notification
+        notification.update(title, message)
+    if(closedAction):
+        notification.connect('closed', closedAction)
+    if(actions):
+        for title, func in actions.items():
+            notification.add_action('clicked', title, func)
+    notification.show()
+    return notification
 
 def md5(fname):
     hash = hashlib.md5()
@@ -86,31 +75,22 @@ def md5(fname):
 
 def OpenFileDialog(title, filter):
     TITLE = 'Bitte Dateien für VIS-Upload auswählen'
-    if(sys.platform == 'win32'):
-        # tk file dialog looks horrible under Linux, so we only use it on Windows
-        root = tk.Tk()
-        root.withdraw()
-        files = []
-        for file in filedialog.askopenfilenames(title=TITLE):
-            files.append(file)
+    dialog1 = Gtk.FileChooserDialog(title=TITLE, parent=None, action=Gtk.FileChooserAction.OPEN)
+    dialog1.add_buttons(
+        Gtk.STOCK_CANCEL,
+        Gtk.ResponseType.CANCEL,
+        Gtk.STOCK_OPEN,
+        Gtk.ResponseType.OK,
+    )
+    dialog1.set_select_multiple(True)
+    response = dialog1.run()
+    files = dialog1.get_filenames()
+    dialog1.close()
+    dialog1.destroy()
+    if(response == Gtk.ResponseType.OK):
         return files
     else:
-        dialog1 = Gtk.FileChooserDialog(title=TITLE, parent=None, action=Gtk.FileChooserAction.OPEN)
-        dialog1.add_buttons(
-            Gtk.STOCK_CANCEL,
-            Gtk.ResponseType.CANCEL,
-            Gtk.STOCK_OPEN,
-            Gtk.ResponseType.OK,
-        )
-        dialog1.set_select_multiple(True)
-        response = dialog1.run()
-        files = dialog1.get_filenames()
-        dialog1.close()
-        dialog1.destroy()
-        if(response == Gtk.ResponseType.OK):
-            return files
-        else:
-            return []
+        return []
 
 def WarningDialog(title, text):
     dialog = Gtk.MessageDialog(
@@ -194,11 +174,7 @@ def main():
             raise Exception('No valid »%s« scheme parameter given, I don\'t know what to do.' % PROTOCOL_SCHEME)
 
         # find download dir
-        if(sys.platform == 'win32'):
-            from pathlib import Path
-            DOWNLOAD_DIR = str(os.path.join(Path.home(), 'Downloads'))
-        else:
-            DOWNLOAD_DIR = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
+        DOWNLOAD_DIR = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
 
         # parse viscs:// url
         parsed = urlparse(urlToHandle)
@@ -214,24 +190,21 @@ def main():
             with open(targetPath, 'wb') as fd:
                 fd.write(r.content)
 
-            if(sys.platform == 'win32'):
-                os.startfile(targetPath)
-            else:
-                subprocess.run(['xdg-open', targetPath])
+            subprocess.run(['xdg-open', targetPath])
 
-                # set up file watcher
-                wm = pyinotify.WatchManager()
-                wm.add_watch(DOWNLOAD_DIR, pyinotify.IN_MODIFY | pyinotify.IN_CLOSE_WRITE)
-                notifier = pyinotify.ThreadedNotifier(wm,
-                    FileChangedHandler(
-                        filePath = targetPath,
-                        uploadUrl = sourcePath,
-                        fileMd5 = md5(targetPath)
-                    )
+            # set up file watcher
+            wm = pyinotify.WatchManager()
+            wm.add_watch(DOWNLOAD_DIR, pyinotify.IN_MODIFY | pyinotify.IN_CLOSE_WRITE)
+            notifier = pyinotify.ThreadedNotifier(wm,
+                FileChangedHandler(
+                    filePath = targetPath,
+                    uploadUrl = sourcePath,
+                    fileMd5 = md5(targetPath)
                 )
-                notifier.start()
-                print('File watcher is now active!', flush=True)
-                print(flush=True)
+            )
+            notifier.start()
+            print('File watcher is now active!', flush=True)
+            print(flush=True)
 
             # show info
             notification = notify(None,
@@ -356,18 +329,13 @@ def main():
             print(flush=True)
 
         # start Gtk GUI mainloop, Linux only
-        try:
-            Gtk.main()
-        except NameError as e:
-            print(str(e), flush=True)
-
+        Gtk.main()
         print('Finished. Thank you and goodbye..', "\n", flush=True)
         print(flush=True)
 
     except Exception as e:
         print(traceback.format_exc(), flush=True)
-        if(sys.platform == 'win32'): input()
-        notify(None, 'VIS File Handler Fehler', str(e))
+        notify(None, 'VIS File Handler - Fehler', str(e))
 
 if __name__ == '__main__':
     main()
